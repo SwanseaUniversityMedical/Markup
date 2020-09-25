@@ -1,9 +1,13 @@
-secretkey.txt
-__pycache__/
 .vscode/
+__pycache__/
+
+umls-database.pickle
+umls-mappings.pickle
+secretkey.txt
+
 *.pyc
-*.pickle
 *.ann
 *.sqlite3
 *.conf
+*.ipynb_checkpoints
 *.zip

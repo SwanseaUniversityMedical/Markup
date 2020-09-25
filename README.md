@@ -1,37 +1,50 @@
-# markup - text annotation
+![](demo.gif)
 
-### Usage (Online)
+### What is Markup?
 
-The online version of markup can be used [here](http://www.getmarkup.com/).
+Markup is an online annotation tool that can be used to transform unstructured documents into structured formats for NLP and ML tasks, such as named-entity recognition. Markup learns as you annotate in order to predict and suggest complex annotations. Markup also provides integrated access to existing and custom ontologies, enabling the prediction and suggestion of ontology mappings based on the text you're annotating.
 
-### Usage (Offline)
+### Usage
 
-Run the following:
-```
-pip3 install virtualenv
-virtualenv -p python3 markup-demo
-cd markup-demo
-source bin/activate
-git clone https://github.com/samueldobbie/markup.git
-cd markup
-pip3 install -r requirements.txt
-python3 manage.py runserver
-```
+A full-feature version of Markup is available both via website and local installation.
+
+#### Online
+
+The online version of Markup can be found <a href="https://www.getmarkup.com/">here</a>.
+
+#### Local Server
+
+1. Clone or download the repository.
+
+2. Execute the setup.py script using 64-bit Python3 (run `python setup.py` or `python3 setup.py` depending on your configuration).
+
+3. Visit <a href="http://127.0.0.1:8000/">http://127.0.0.1:8000/</a> and start annotating!
+
+For futher use, the local server can be started directly by running `python manage.py runserver` or `python3 manage.py runserver`.
 
 ### Documentation
 
-Documentation can be read [here](http://www.getmarkup.com/learn-more).
+Documentation to help with setting up and using Markup can be found <a href="https://www.getmarkup.com/docs">here</a>.
 
-### To-Do
+### Features
 
-- Require user account
-- Allow option to store encrypted dictionary associate with individual / groups of users
-- Improve phrase approximation
-- Get running on SAIL Databank servers
-- Improve security
-- Add annotation suggestion ML model associated with each user
-- (Potentially) Add annotation suggestion ML model associated with all users. May not be possible to do securely, as each user will have a unique encryption key
-- Make configuration file creator intuitive to use
-- Write documenation
-- Allow users to select multiple documents and their corresponding annotations files
-- Provide option for a downloadable, offline version of markup
+- Ability to navigate between and annotate multiple documents in a single session.
+- Predictive annotation suggestions (incl. attributes) using underlying active learning and sequence-to-sequence models.
+- Integrated access to pre-loaded and user-defined ontologies, enabling predictive mappings and direct querying.
+- Built-in configuration file creator.
+- Built-in synthetic data generator and custom model trainer (local version only due to high computational expense).
+- Dynamic attribute display.
+- Any number of overlaying annotations, enabling the capture of complex data.
+- Full-feature tool available via local installation and website.
+- Dark mode.
+
+### Future Plans
+
+- Add user accounts.
+- Add ability for users to join a team and share ontologies, documents, guidelines, annotations, etc.
+- Accessible version for colour-blind users.
+- Add ability to perform text and image classification.
+- Add ability to annotate images.
+
+### Known Bugs / Issues
+- Annotations may be offset when annotating across newlines in CRLF (Windows) text documents. The offset is purely visual; the exported indicies will be correct.

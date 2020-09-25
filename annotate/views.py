@@ -1,207 +1,592 @@
+import os
+import re
 import json
 import pickle
 import requests
+import stringdist
+import zipfile
+import urllib.request
+import numpy as np
 
 from django.http import HttpResponse
 from django.shortcuts import render
-
-from nltk import sent_tokenize
-from nltk import word_tokenize
-from nltk import ngrams
-
-from simstring.feature_extractor.character_ngram import (
-    CharacterNgramFeatureExtractor)
 from simstring.database.dict import DictDatabase
 from simstring.measure.cosine import CosineMeasure
 from simstring.searcher import Searcher
+from simstring.feature_extractor.character_ngram import (
+    CharacterNgramFeatureExtractor
+)
+from keras.models import Model, load_model
+from keras.layers import Input
+
+from modAL.models import ActiveLearner
+from modAL.uncertainty import uncertainty_sampling
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_extraction.text import CountVectorizer
 
 
 def annotate_data(request):
     return render(request, 'annotate/annotate.html', {})
 
 
-def get_cui(request):
-    """
-    Performs lookup of cui based on selected UMLS term
-    """
-    global searcher
-    if searcher is None:
-        return HttpResponse('')
+def setup_umls_if_valid(request):
+    '''
+    Check whether user has the appropiate permissions to use
+    UMLS, setup if valid (incl. download for first time local users)
+    '''
+    global umls_database, umls_mappings
 
-    return HttpResponse(term_to_cui[request.GET['match']])
+    # Authenticate UMLS account and get UMLS download link
+    data = {
+        'umls-username': request.POST['umls-username'],
+        'umls-password': request.POST['umls-password']
+    }
+    response = requests.post('https://9wgxw45k93.execute-api.eu-west-2.amazonaws.com/markup-get-umls-if-valid', json=data)
+    download_link = response.text
+    valid_user = download_link != ''
+
+    if valid_user:
+        # Download and extract UMLS database and mappings for first time users
+        if umls_database is None or umls_mappings is None:
+            ontology_path = PATH + '/data/ontology/'
+            urllib.request.urlretrieve(download_link, ontology_path + 'umls.zip')
+            with zipfile.ZipFile(ontology_path + 'umls.zip', 'r') as zf:
+                zf.extractall(ontology_path)
+
+            # Pre-loaded UMLS ontology
+            umls_database = pickle.load(open(ontology_path + 'umls-database.pickle', 'rb'))
+            umls_mappings = pickle.load(open(ontology_path + 'umls-mappings.pickle', 'rb'))
+
+        setup_preloaded_ontology('umls')
+
+    return HttpResponse(valid_user)
+
+
+def setup_demo(request):
+    '''
+    Setup the demo documents, configuration
+    and ontology
+    '''
+    response = {}
+    response['documents'] = get_demo_documents()
+    response['config'] = get_demo_config()
+
+    use_demo_ontology()
+
+    return HttpResponse(json.dumps(response))
+
+
+def get_demo_documents():
+    '''
+    Read and return the demo documents
+    '''
+    documents = []
+    for f_name in os.listdir('data/demo/'):
+        if 'demo-document' in f_name and f_name.endswith('.txt'):
+            with open('data/demo/' + f_name, encoding='utf-8') as f:
+                documents.append(f.read())
+    return documents
+
+
+def get_demo_config():
+    '''
+    Read and return the demo
+    configuration file
+    '''
+    config = ''
+    with open('data/demo/demo-config.conf', encoding='utf-8') as f:
+        config = f.read()
+    return config
+
+
+def use_demo_ontology():
+    '''
+    Specify the demo ontology to be used
+    for the automated mapping suggestions
+    '''
+    global simstring_searcher, term_to_cui
+
+    simstring_searcher = Searcher(demo_database, CosineMeasure())
+    term_to_cui = demo_mappings
+
+
+def setup_preloaded_ontology(selected_ontology):
+    '''
+    Setup user-specified, pre-loaded ontology
+    for automated mapping suggestions
+    '''
+    global simstring_searcher, term_to_cui
+
+    if selected_ontology == 'umls':
+        simstring_searcher = Searcher(umls_database, CosineMeasure())
+        term_to_cui = umls_mappings
+
+    return HttpResponse(None)
+
+
+def setup_custom_ontology(request):
+    '''
+    Setup custom ontology for
+    automated mapping suggestions
+    '''
+    global simstring_searcher, term_to_cui
+
+    ontology_data = request.POST['ontologyData'].split('\n')
+    database, term_to_cui = construct_ontology(ontology_data)
+    simstring_searcher = Searcher(database, CosineMeasure())
+
+    return HttpResponse(None)
+
+
+def construct_ontology(ontology_data):
+    '''
+    Create an n-char simstring database and
+    term-to-code mapping to enable rapid ontology
+    querying
+    '''
+    database = DictDatabase(CharacterNgramFeatureExtractor(2))
+
+    term_to_cui = {}
+    for entry in ontology_data:
+        entry_values = entry.split('\t')
+        if len(entry_values) == 2:
+            term = clean_selected_term(entry_values[1])
+            term_to_cui[term] = entry_values[0].strip()
+
+    for term in term_to_cui.keys():
+        term = clean_selected_term(term)
+        database.add(term)
+
+    return database, term_to_cui
+
+
+def reset_ontology(request):
+    '''
+    Void any existing uses of ontologies
+    to avoid cross-overs between sessions
+    '''
+    global simstring_searcher, term_to_cui
+
+    simstring_searcher = None
+    term_to_cui = None
+
+    return HttpResponse(None)
 
 
 def suggest_cui(request):
-    """
-    Returns all relevant UMLS matches that have a cosine similarity
-    value over the specified threshold, in descending order
-    """
-    global searcher
-    if searcher is None:
-        return HttpResponse('')
+    '''
+    Returns all relevant ontology matches that have a similarity
+    value over the specified threshold, ranked in descending order
+    '''
+    if simstring_searcher is None:
+        return HttpResponse(json.dumps([]))
 
-    selected_term = request.GET['selectedTerm']
-    selected_term_words = selected_term.split(' ')
-    selected_term_weights = [i for i in range(len(selected_term_words), 0, -1)]
-    selected_term_weights_count = len(selected_term_weights)
+    selected_term = clean_selected_term(request.POST['selectedTerm'])
+    ranked_matches = get_ranked_ontology_matches(selected_term)
+
+    return HttpResponse(json.dumps(ranked_matches))
+
+
+def clean_selected_term(selected_term):
+    '''
+    Helper function to transform the selected term into the
+    same format as the terms within the simstring database
+    '''
+    return selected_term.strip().lower()
+
+
+def get_ranked_ontology_matches(cleaned_term):
+    '''
+    Get ranked matches from ontology
+    '''
+    ontology_matches = simstring_searcher.ranked_search(
+        cleaned_term,
+        SIMILARITY_THRESHOLD
+    )
 
     # Weight relevant UMLS matches based on word ordering
-    weighted_outputs = {}
-    for umls_match in searcher.ranked_search(selected_term, COSINE_THRESHOLD):
-        umls_term = umls_match[1]
-        umls_term_words = umls_term.split(' ')
+    weighted_matches = {}
+    for ontology_match in ontology_matches:
+        # Get term and cui from ontology
+        ontology_term = ontology_match[1]
+        ontology_cui = term_to_cui[ontology_term]
 
-        score = 0
-        for i in range(len(umls_term_words)):
-            if i == selected_term_weights_count:
-                break
-            elif umls_term_words[i] == selected_term_words[i]:
-                score += selected_term_weights[i]
-        # Add divsor to each term
-        weighted_outputs[umls_term + '***'] = score
+        # Calculate Levenshtein distance for ranking
+        levenshtein_distance = stringdist.levenshtein(
+            ontology_term,
+            cleaned_term
+        )
 
-    # Sort order matches will be displayed based on weights
-    output = [i[0] for i in sorted(weighted_outputs.items(), key=lambda kv: kv[1])]
-    output.reverse()
+        # Construct match key with divisor
+        key = ontology_term + ' :: UMLS ' + ontology_cui
+        weighted_matches[key] = levenshtein_distance
 
-    # Remove divisor from final term
-    if output != []:
-        output[-1] = output[-1][:-3]
+    # Construct list of ranked terms based on levenshtein distasnce value
+    ranked_matches = [
+        ranked_pair[0] for ranked_pair in sorted(
+            weighted_matches.items(),
+            key=lambda kv: kv[1]
+        )
+    ]
 
-    return HttpResponse(output)
+    return ranked_matches
 
 
-def setup_dictionary(request):
-    """
-    Setup user-specified dictionary to be used for
-    phrase approximation
-    """
-    dictionary_selection = request.POST['dictionarySelection']
-    global term_to_cui
-    global searcher
-    if dictionary_selection == 'umlsDictionary':
-        searcher = umls_searcher
-    elif dictionary_selection == 'noDictionary':
-        searcher = None
-    elif dictionary_selection == 'userDictionary':
-        i = 0
-        json_data = json.loads(request.POST['dictionaryData'])
-        db = DictDatabase(CharacterNgramFeatureExtractor(2))
-        term_to_cui = {}
-        for row in json_data:
-            values = row.split('\t')
-            if len(values) == 2:
-                term_to_cui[values[1]] = values[0]
-        for value in term_to_cui.keys():
-            value = clean_dictionary_term(value)
-            i += 1
-            db.add(value)
-        searcher = Searcher(db, CosineMeasure())
+def suggest_annotations(request):
+    '''
+    Return annotation suggestions
+    (incl. attributes) for the open document
+    '''
+    text = request.POST['documentText']
+    annotations = set(json.loads(request.POST['documentAnnotations']))
+
+    # Predict target sentences (that contain prescriptions)
+    target_sentences = sentence_classifier.get_target_sentences(text, annotations)
+
+    # Predict attributes from target sentences
+    suggestions = []
+    for sentence in target_sentences:
+        prediction = annotation_predictor.predict(sentence)
+        if prediction is not None:
+            suggestions.append(prediction)
+
+    return HttpResponse(json.dumps(suggestions))
+
+
+def teach_active_learner(request):
+    '''
+    Teach active learner upon acceptance,
+    rejection of related annotation
+    '''
+    sentence = request.POST['sentence']
+    label = int(request.POST['label'])
+    sentence_classifier.teach(sentence, label)
     return HttpResponse(None)
 
 
-def clean_dictionary_term(value):
-    return value.lower()
+def teach_seq2seq():
+    pass
 
 
-'''
-def auto_annotate(request):
-    doc_text = request.GET['document_text']
+class SentenceClassifier:
+    def __init__(self, PATH):
+        self.user_data_path = PATH + '/data/text/user-classifier-data.txt'
+        self.synthetic_data_path = PATH + '/data/text/synthetic-classifier-data.txt'
+        self.setup_model()
 
-    doc_ngrams = []
-    for sentence in sent_tokenize(doc_text):
-        tokens = sentence.split()
-        token_count = len(tokens)
-        if token_count > 2:
-            token_count = 3
+    def setup_model(self):
+        '''
+        Define active learner and train
+        with synthetic + stored examples
+        '''
+        # Read in training data
+        with open(self.user_data_path, encoding='utf-8') as f:
+            data = f.read().split('\n')
 
-        for n in range(2, token_count):
-            for ngram in ngrams(tokens, n):
-                term = ' '.join(list(ngram))
-                if term not in doc_ngrams:
-                    doc_ngrams.append(term)
+        with open(self.synthetic_data_path, encoding='utf-8') as f:
+            data += f.read().split('\n')
 
-    raw_sentence_ngrams = []
-    clean_sentence_ngrams = []
-    for raw_ngram in doc_ngrams:
-        if not raw_ngram[-1].isalnum():
-            raw_ngram = raw_ngram[:-1]
+        # Remove duplicates
+        data = set(data)
+
+        # Setup vectorizer and prepare training data
+        self.vectorizer = CountVectorizer()
+        self.X, self.y = [], []
+        for row in data:
+            row = row.split('\t')
+            if len(row) == 2:
+                self.X.append(row[0].strip())
+                self.y.append(int(row[1]))
+        self.X = self.vectorizer.fit_transform(self.X)
+
+        self.learner = ActiveLearner(
+            estimator=RandomForestClassifier(),
+            query_strategy=uncertainty_sampling,
+            X_training=self.X,
+            y_training=self.y
+        )
+
+    def get_target_sentences(self, text, annotations):
+        '''
+        Return sentences that contain
+        a prescription
+        '''
+        sentences = self.text_to_sentences(text)
+
+        target_sentences = []
+        for sentence in sentences:
+            classification = self.learner.predict(self.vectorizer.transform([sentence]))
+            if classification[0] == 1 and self.convert_to_export_format(sentence) not in annotations:
+                target_sentences.append(sentence)
+        return target_sentences
+
+    def convert_to_export_format(self, sentence):
+        return '-'.join(sentence.split(' '))
+
+    def text_to_sentences(self, text):
+        '''
+        Convert body of text into individual sentences
+        '''
+        sentences = re.split(delimiters, text)
+        sentences = map(self.clean_sentence, sentences)
+        return list(filter(self.is_valid_sentence, sentences))
+
+    def clean_sentence(self, sentence):
+        return sentence.strip()
+
+    def is_valid_sentence(self, sentence):
+        return sentence != '' and sentence not in stopwords
+
+    def teach(self, sentence, label):
+        '''
+        Save training data and update model
+        '''
+        # Store local data
+        sentence = sentence.lower().strip()
+        with open(self.user_data_path, 'a', encoding='utf-8') as f:
+            f.write(sentence + '\t' + str(label) + '\n')
+
+        # Setup learner with new data (to-do: train incrementally)
+        self.setup_model()
+
+
+class Seq2Seq:
+    def __init__(self, PATH):
+        # Declare model configurations (same as during training)
+        self.latent_dim = 256
+        self.num_samples = 50000
+        self.data_path = PATH + '/data/text/synthetic-seq2seq-data.txt'
+        self.model_path = PATH + '/data/model/seq2seq.h5'
+
+        # Restore model ready for use
+        self.restore_model()
+
+    def restore_model(self):
+        # Read in training data
+        with open(self.data_path, encoding='utf-8') as f:
+            lines = f.read().split('\n')
+
+        # Vectorize training data
+        input_texts = []
+        target_texts = []
+        input_words = set()
+        target_words = set()
+        for line in lines[:min(self.num_samples, len(lines)-1)]:
+            line = line.lower()
+
+            # Parse input and target texts
+            input_text, target_text = line.split('\t')
+            target_text = '\t ' + target_text + ' \n'
+            input_texts.append(input_text)
+            target_texts.append(target_text)
+
+            # Define vocabulary of input words
+            for word in input_text.split(' '):
+                input_words.add(word)
+
+            # Define vocabulary of target words
+            for word in target_text.split(' '):
+                target_words.add(word)
+
+            # Add divisors to vocabularies
+            input_words.add(' ')
+            target_words.add(' ')
+
+        # Sort vocabularies
+        input_words = sorted(list(input_words))
+        target_words = sorted(list(target_words))
+
+        # Count texts, tokens and maximum sequence lengths
+        self.num_encoder_tokens = len(input_words)
+        self.num_decoder_tokens = len(target_words)
+        self.max_encoder_seq_length = max([len(input_text.split(' ')) for input_text in input_texts])
+        self.max_decoder_seq_length = max([len(target_text.split(' ')) for target_text in target_texts])
+
+        # Index each word in input vocabulary
+        self.input_token_index = dict([
+            (word, i) for i, word in enumerate(input_words)
+        ])
+
+        # Index each word in target vocabulary
+        self.target_token_index = dict([
+            (word, i) for i, word in enumerate(target_words)
+        ])
+
+        encoder_input_data = np.zeros((len(input_texts), self.max_encoder_seq_length, self.num_encoder_tokens), dtype='uint8')
+
+        for i, input_text in enumerate(input_texts):
+            for t, word in enumerate(input_text.split(' ')):
+                encoder_input_data[i, t, self.input_token_index[word]] = 1.
+            encoder_input_data[i, t + 1:, self.input_token_index[' ']] = 1.
+
+        # Restore the model
+        self.model = load_model(self.model_path)
+
+        # Construct the encoder
+        encoder_inputs = self.model.input[0]
+        encoder_outputs, state_h_enc, state_c_enc = self.model.layers[2].output
+        encoder_states = [state_h_enc, state_c_enc]
+        self.encoder_model = Model(encoder_inputs, encoder_states)
+
+        # Construct the decoder
+        decoder_inputs = self.model.input[1]
+        decoder_state_input_h = Input(shape=(self.latent_dim,), name='input_3')
+        decoder_state_input_c = Input(shape=(self.latent_dim,), name='input_4')
+        decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+        decoder_lstm = self.model.layers[3]
+        decoder_outputs, state_h_dec, state_c_dec = decoder_lstm(
+            decoder_inputs,
+            initial_state=decoder_states_inputs
+        )
+        decoder_states = [state_h_dec, state_c_dec]
+        decoder_dense = self.model.layers[4]
+        decoder_outputs = decoder_dense(decoder_outputs)
+        self.decoder_model = Model(
+            [decoder_inputs] + decoder_states_inputs,
+            [decoder_outputs] + decoder_states
+        )
+
+        # Reverse-lookup token index to decode sequences back to readable form
+        self.reverse_target_word_index = dict(
+            (i, word) for word, i in self.target_token_index.items()
+        )
+
+    def decode_sequence(self, input_seq):
+        # Encode the input as state vectors.
+        states_value = self.encoder_model.predict(input_seq)
+
+        # Generate empty target sequence of length 1.
+        target_seq = np.zeros((1, 1, self.num_decoder_tokens))
+
+        # Populate the first character of target sequence with the start token
+        target_seq[0, 0, self.target_token_index['\t']] = 1.
+
+        # Sampling loop for a batch of sequences
+        stop_condition = False
+        decoded_sentence = ''
+        while not stop_condition:
+            output_tokens, h, c = self.decoder_model.predict([target_seq] + states_value)
+
+            # Sample a token
+            sampled_token_index = np.argmax(output_tokens[0, -1, :])
+            sampled_word = self.reverse_target_word_index[sampled_token_index]
+
+            decoded_sentence += sampled_word + ' '
+
+            # Exit condition: either hit max length or find stop character.
+            if (sampled_word == '\n' or len(decoded_sentence.split(' ')) > self.max_decoder_seq_length):
+                stop_condition = True
+
+            # Update the target sequence (of length 1).
+            target_seq = np.zeros((1, 1, self.num_decoder_tokens))
+            target_seq[0, 0, sampled_token_index] = 1.
+
+            # Update states
+            states_value = [h, c]
+
+        return decoded_sentence
+
+    def clean_raw_sentence(self, sentence):
+        '''
+        Seperate all dosages and units (e.g. 350mgs -> 350 mgs)
+        contained with a sentence
+        '''
+        updated_sentence = ''
+        for component in re.split('(\d+)', sentence):
+            updated_sentence += component.strip() + ' '
+        return ' '.join(updated_sentence.split(' ')).lower()
+
+    def predict(self, raw_sentence):
+        '''
+        Predict single prescription contained
+        within sentence (extracting drug name,
+        dosage, unit, frequency)
+        '''
+        clean_sentence = self.clean_raw_sentence(raw_sentence)
+
+        if len(clean_sentence.split(' ')) >= self.max_encoder_seq_length:
+            vector = np.zeros((1, len(clean_sentence.split(' ')) + 1, self.num_encoder_tokens), dtype='uint8')
         else:
-            continue
+            vector = np.zeros((1, self.max_encoder_seq_length, self.num_encoder_tokens), dtype='uint8')
 
-        clean_ngram = ''
-        for char in raw_ngram:
-            if char.isalnum():
-                clean_ngram += char.lower()
-            else:
-                clean_ngram += ' '
-        clean_ngram = ' '.join([word for word in clean_ngram.split()])
-        if clean_ngram is not '':
-            raw_sentence_ngrams.append(raw_ngram)
-            clean_sentence_ngrams.append(clean_ngram)
+        for i, word in enumerate(clean_sentence.split(' ')):
+            if word in self.input_token_index:
+                vector[0, i, self.input_token_index[word]] = 1.
+        vector[0, i + 1, self.input_token_index[' ']] = 1.
 
-    final_results = []
-    for i in range(len(raw_sentence_ngrams)):
-        result = searcher.ranked_search(raw_sentence_ngrams[i].lower(),
-                                        COSINE_THRESHOLD + 0.2)
-        if result == []:
-            continue
+        sequence = self.decode_sequence(vector).strip().split('; ')
+
+        if len(sequence) == 4:
+            drug_name = sequence[0].split('dn: ')[1]
+            drug_dose = sequence[1].split('dd: ')[1]
+            drug_unit = sequence[2].split('du: ')[1]
+            drug_frequency = sequence[3].split('df: ')[1]
         else:
-            final_results.append([raw_sentence_ngrams[i]] + [result[0][1]] +
-                                 [term_to_cui[result[0][1]]])
+            return None
 
-    return HttpResponse(json.dumps(final_results))
+        # Only consider prediction valid if drug name and dose appears in sentence
+        if drug_name in clean_sentence and drug_dose in clean_sentence:
+            # Get ontology term and cui
+            ontology_term, ontology_cui = '', ''
+            if simstring_searcher is not None:
+                ranked_matches = get_ranked_ontology_matches(
+                    clean_selected_term(drug_name)
+                )
 
+                if len(ranked_matches) != 0:
+                    best_match = ranked_matches[0].split(' :: UMLS ')
+                    ontology_term = best_match[0]
+                    ontology_cui = best_match[1]
 
-def load_user_dictionary(request, data_file_path):
-    try:
-        chosen_file = gui.PopupGetFile('Choose a file', no_window=True)
-    except:
-        return HttpResponse(None)
+            prediction = {}
+            prediction['sentence'] = raw_sentence
+            prediction['DrugName'] = drug_name
+            prediction['DrugDose'] = drug_dose
+            prediction['DoseUnit'] = drug_unit
+            prediction['Frequency'] = drug_frequency
+            prediction['CUIPhrase'] = ontology_term
+            prediction['CUI'] = ontology_cui
 
-    # Read in tab-delimited UMLS file in form of (CUI/tTERM)
-    user_dict = open(chosen_file).read().split('\n')
+            return prediction
+        
+        return None
 
-    # Split tab-delimited UMLS file into seperate lists of cuis and terms
-    cui_list = []
-    term_list = []
+    def train(self, instance, label):
+        pass
 
-    for row in user_dict:
-        data = row.split('\t')
-        if len(data) > 1:
-            cui_list.append(data[0])
-            term_list.append(data[1])
+# Project path
+PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-    global term_to_cui
-    global db
-    global searcher
+# Define active learner for classifying target sentences
+sentence_classifier = SentenceClassifier(PATH)
 
-    # Map cleaned UMLS term to its original
-    term_to_cui = dict()
+# Define annotation prediction model
+annotation_predictor = Seq2Seq(PATH)
 
-    for i in range(len(term_list)):
-        term_to_cui[term_list[i]] = cui_list[i]
+# Simstring parameters
+SIMILARITY_THRESHOLD = 0.7
+simstring_searcher = None
+term_to_cui = None
 
-    # Create simstring model
-    db = DictDatabase(CharacterNgramFeatureExtractor(2))
+# Load demo ontology
+demo_database = pickle.load(open(PATH + '/data/demo/demo-database.pickle', 'rb'))
+demo_mappings = pickle.load(open(PATH + '/data/demo/demo-mappings.pickle', 'rb'))
 
-    for term in term_list:
-        db.add(term)
+# Load UMLS ontology
+umls_database = None
+umls_mappings = None
 
-    searcher = Searcher(db, CosineMeasure())
-    return HttpResponse(None)
-'''
-COSINE_THRESHOLD = 0.7
+pickles = [f for f in os.listdir(PATH + '/data/ontology/') if os.path.isfile(os.path.join('data/ontology/', f))]
 
-'''
-TEST = True
+if 'umls-database.pickle' in pickles and 'umls-mappings.pickle' in pickles:
+    umls_database = pickle.load(open(PATH + '/data/ontology/umls-database.pickle', 'rb'))
+    umls_mappings = pickle.load(open(PATH + '/data/ontology/umls-mappings.pickle', 'rb'))
 
-if TEST:
-    term_to_cui = None
-    umls_db = None
-    umls_searcher = None
-else:
-    term_to_cui = pickle.load(open('term_to_cui.pickle', 'rb'))
-    umls_db = pickle.load(open('db.pickle', 'rb'))
-    umls_searcher = Searcher(umls_db, CosineMeasure())
-'''
+# Construct regex string containing sentence delimiters
+with open(PATH + '/data/text/sentence-delimiters.txt', encoding='utf-8') as f:
+    values = [d.strip('\n') for d in f]
+    delimiters = r'({})'.format('|'.join(values))
+
+# Stopwords for cleaning sentences
+stopwords = set(open(PATH + '/data/text/stopwords.txt', encoding='utf-8').read().split('\n'))
