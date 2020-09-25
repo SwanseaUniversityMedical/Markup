@@ -1,4 +1,48 @@
-const SessionManager = {
+$(document).ready(function () {
+    // Toggle display mode
+    $('#darkMode').click(function () {
+        if (localStorage.getItem('mode') == 'dark') {
+            localStorage.setItem('mode', 'light');
+        } else {
+            localStorage.setItem('mode', 'dark');
+        }
+        displayManager.updateDisplay();
+    });
+
+    displayManager.updateDisplay();
+});
+
+
+const displayConfigs = {
+    primaryColor: '#33FFB5',
+
+    config : {
+        navText: 'Dark Mode',
+        backgroundColor: '#f1f1f1',
+        backgroundColorAlt: '#1A1E24',
+        backgroundColorSim: '#e7e7e7',
+        textColor: '#1A1E24'
+    },
+
+    updateConfigs() {
+        if (localStorage.getItem('mode') == 'dark') {
+            this.config.navText = 'Light Mode';
+            this.config.backgroundColor = '#1A1E24';
+            this.config.backgroundColorAlt = '#f1f1f1';
+            this.config.backgroundColorSim = '#31363d';
+            this.config.textColor = 'white';
+        } else {
+            this.config.navText = 'Dark Mode';
+            this.config.backgroundColor = '#f1f1f1';
+            this.config.backgroundColorAlt = '#1A1E24';
+            this.config.backgroundColorSim = '#e7e7e7';
+            this.config.textColor = '#1A1E24';
+        }
+    }
+}
+
+
+const sessionManager = {
     newSession() {
         this.clearLocalStorage();
         this.resetOntology();
@@ -22,6 +66,7 @@ const SessionManager = {
         });
     }
 }
+
 
 const requestHeaderManager = {
     setRequestHeader() {
@@ -53,6 +98,33 @@ const requestHeaderManager = {
     },
 }
 
+
+const displayManager = {
+    updateDisplay() {
+        displayConfigs.updateConfigs();
+        this.updateStyles();
+    },
+
+    updateStyles() {
+        // Update button in nav
+        document.getElementById('darkMode').innerHTML = displayConfigs.config.navText;
+
+        let backgroundColor = displayConfigs.config.backgroundColor;
+        let textColor = displayConfigs.config.textColor;
+        let primaryColor = displayConfigs.primaryColor;
+
+        // Update background and text color of page items
+        $('nav').css({'background-color': backgroundColor});
+        $('.nav-logo').css({'color': textColor});
+        $('.nav-item').css({'color': textColor});
+        $('.nav-item-arrow').css({'color': primaryColor});
+        $('body').css({
+            'background-color': backgroundColor,
+            'color': textColor
+        });
+    },
+}
+
 requestHeaderManager.setRequestHeader();
 
-SessionManager.newSession();
+sessionManager.newSession();

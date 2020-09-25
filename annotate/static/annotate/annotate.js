@@ -1,4 +1,33 @@
 $(document).ready(function () {
+    $('#darkMode').click(function () {
+        let textColor = displayConfigs.config.textColor;
+        let backgroundColorAlt = displayConfigs.config.backgroundColorAlt;
+        let backgroundColorSim = displayConfigs.config.backgroundColorSim;
+
+        $('.section-title').css({'color': textColor});
+        $('#annotation-suggestion-list').css({'backgroundColor': backgroundColorSim});
+        
+        $('#annotation-suggestion-quantity').css({
+            'background-color': backgroundColorSim,
+            'color': textColor
+        });
+
+        $('.inline-annotation').each(function () {
+            $(this).css('color', 'black');
+        });
+    
+        $('.displayed-annotation').each(function () {
+            $(this).css('color', 'black');
+        });
+    
+        var loaderElements = document.getElementsByClassName('lds-ellipsis');
+        for (var i = 0; i < loaderElements.length; i++) {
+            for (var j = 0; j < loaderElements[i].childNodes.length; j++) {
+                loaderElements[i].childNodes[j].style.background = backgroundColorAlt;
+            }
+        }
+    });
+
     // Setup annotation page
     onPageLoad(true);
 
@@ -54,12 +83,6 @@ function onPageLoad(initalLoad) {
         var detailedConfigValues = displayAttributeConfigurations(entityList, attributeSentences);
         var configArgs = detailedConfigValues[0];
         var configVals = detailedConfigValues[1];
-
-        // Update display based on users' preference
-        updateDisplayMode();
-
-        // Allow users to change the display mode
-        $('#darkMode').click(switchDisplayMode);
 
         // Get all configuration elements for manipulation
         var attributeCheckboxes = $('input[type=checkbox]');
@@ -403,91 +426,6 @@ function displayAttributeConfigurations(entityList, configValues) {
         }
     }
     return [configArgs, configVals];
-}
-
-
-function updateDisplayMode() {
-    /*
-    Updates display mode based on users' preference
-    */
-    var backgroundColor, oppositeBackgroundColor, similarBackgroundColor, color;
-
-    if (localStorage.getItem('mode') == 'dark') {
-        document.getElementById('darkMode').innerHTML = 'Light Mode';
-        backgroundColor = '#1A1E24';
-        oppositeBackgroundColor = '#f1f1f1';
-        similarBackgroundColor = '#31363d'
-        color = 'white';
-    } else {
-        document.getElementById('darkMode').innerHTML = 'Dark Mode';
-        backgroundColor = '#f1f1f1';
-        oppositeBackgroundColor = '#1A1E24';
-        similarBackgroundColor = '#e7e7e7';
-        color = '#1A1E24';
-    }
-
-    $('body').css({
-        'background-color': backgroundColor,
-        'color': color
-    });
-
-    $('nav').css({
-        'background-color': backgroundColor
-    });
-
-    $('.nav-logo').css({
-        'color': color
-    });
-
-    $('.nav-item').css({
-        'color': color
-    });
-
-    $('.nav-item-arrow').css({
-        'color': '#33FFB5'
-    });
-
-    $('.section-title').css({
-        'color': color
-    });
-
-    $('.inline-annotation').each(function () {
-        $(this).css('color', 'black');
-    });
-
-    $('.displayed-annotation').each(function () {
-        $(this).css('color', 'black');
-    });
-
-    $('#annotation-suggestion-quantity').css({
-        'background-color': similarBackgroundColor,
-        'color': color
-    });
-
-    $('#annotation-suggestion-list').css({
-        'backgroundColor': similarBackgroundColor
-    });
-
-    var loaderDivs = document.getElementsByClassName('lds-ellipsis');
-    for (var i = 0; i < loaderDivs.length; i++) {
-        for (var j = 0; j < loaderDivs[i].childNodes.length; j++) {
-            loaderDivs[i].childNodes[j].style.background = oppositeBackgroundColor;
-        }
-    }
-}
-
-
-function switchDisplayMode() {
-    /*
-    Enable users to switch between
-    light and dark display modes
-    */
-    if (localStorage.getItem('mode') == 'dark') {
-        localStorage.setItem('mode', 'light');
-    } else {
-        localStorage.setItem('mode', 'dark');
-    }
-    updateDisplayMode();
 }
 
 
