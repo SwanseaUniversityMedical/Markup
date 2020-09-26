@@ -1,8 +1,8 @@
 $(document).ready(function () {
     $('#darkMode').click(function () {
-        let textColor = displayConfigs.config.textColor;
-        let backgroundColorAlt = displayConfigs.config.backgroundColorAlt;
-        let backgroundColorSim = displayConfigs.config.backgroundColorSim;
+        const textColor = displayConfigs.config.textColor;
+        const backgroundColorAlt = displayConfigs.config.backgroundColorAlt;
+        const backgroundColorSim = displayConfigs.config.backgroundColorSim;
 
         $('.section-title').css({'color': textColor});
         $('#annotation-suggestion-list').css({'backgroundColor': backgroundColorSim});

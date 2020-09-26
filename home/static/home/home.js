@@ -4,7 +4,7 @@ $(document).ready(function () {
     });
         
     $('#darkMode').click(function () {
-        let textColor = displayConfigs.config.textColor;
+        const textColor = displayConfigs.config.textColor;
         $('.tagline-component').css({'color': textColor});
         $('#try-demo').css({'color': textColor});
     });
@@ -12,47 +12,44 @@ $(document).ready(function () {
 
 
 function setupDemo() {
+    const cookie = requestHeaderManager.getCookie('csrftoken');
+
     $.ajax({
         type: 'POST',
-        url: '~/setup-demo',
-        data: {'csrfmiddlewaretoken': requestHeaderManager.getCookie('csrftoken')},
+        url: 'annotate/setup-demo/',
+        data: {'csrfmiddlewaretoken': cookie},
         success: function (response) {
-            var data = JSON.parse(response);
+            const data = JSON.parse(response);
+            const config = data['config'];
+            const docs = data['documents'];
+            const docsCount = docs.length;
+            const openType = docsCount <= 1 ? 'single' : 'multiple'
 
-            // Store demo documents locally
-            var documents = data['documents'];
-            var documentCount = documents.length;
-            if (documentCount > 1) {
-                localStorage.setItem('documentOpenType', 'multiple');
-            } else {
-                localStorage.setItem('documentOpenType', 'single');
-            }
-            localStorage.setItem('documentCount', documentCount);
-
-            for (var i = 0; i < documentCount; i++) {
-                localStorage.setItem('fileName' + i, 'demo-document-' + i);
-                localStorage.setItem('documentText' + i, documents[i]);
-                localStorage.setItem('lineBreakType' + i, detectLineBreakType(documents[i]));
-            }
-
-            // Store demo config locally
-            var config = data['config']; 
+            // Store configurations
             localStorage.setItem('configText', config);
+            localStorage.setItem('documentCount', docsCount);
+            localStorage.setItem('documentOpenType', openType);
 
-            // Move to anontation page for demo docs
+            // Store doc texts and file types
+            for (let i = 0; i < docsCount; i++) {
+                localStorage.setItem('fileName' + i, 'demo-document-' + i);
+                localStorage.setItem('documentText' + i, docs[i]);
+                localStorage.setItem('lineBreakType' + i, getLineBreakType(docs[i]));
+            }
+
+            // Move to annotation page
             location.href = '/annotate';
         }
     });
 }
 
-function detectLineBreakType(text) {
+function getLineBreakType(text) {
     if (text.indexOf('\r\n') !== -1) {
         return 'windows';
     } else if (text.indexOf('\r') !== -1) {
         return 'mac';
     } else if (text.indexOf('\n') !== -1) {
         return 'linux';
-    } else {
-        return 'unknown';
     }
+    return 'unknown';
 }

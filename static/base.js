@@ -1,5 +1,5 @@
 $(document).ready(function () {
-    // Toggle display mode
+    /* Switch between dark and light display modes */
     $('#darkMode').click(function () {
         if (localStorage.getItem('mode') == 'dark') {
             localStorage.setItem('mode', 'light');
@@ -8,8 +8,6 @@ $(document).ready(function () {
         }
         displayManager.updateDisplay();
     });
-
-    displayManager.updateDisplay();
 });
 
 
@@ -39,6 +37,34 @@ const displayConfigs = {
             this.config.textColor = '#1A1E24';
         }
     }
+}
+
+
+const displayManager = {
+    updateDisplay() {
+        displayConfigs.updateConfigs();
+        this.updateStyles();
+    },
+
+    updateStyles() {
+        const navText = displayConfigs.config.navText;
+        const backgroundColor = displayConfigs.config.backgroundColor;
+        const textColor = displayConfigs.config.textColor;
+        const primaryColor = displayConfigs.primaryColor;
+
+        // Update button in nav
+        document.getElementById('darkMode').innerHTML = navText;
+
+        // Update background and text color of page items
+        $('nav').css({'background-color': backgroundColor});
+        $('.nav-logo').css({'color': textColor});
+        $('.nav-item').css({'color': textColor});
+        $('.nav-item-arrow').css({'color': primaryColor});
+        $('body').css({
+            'background-color': backgroundColor,
+            'color': textColor
+        });
+    },
 }
 
 
@@ -98,33 +124,6 @@ const requestHeaderManager = {
     },
 }
 
-
-const displayManager = {
-    updateDisplay() {
-        displayConfigs.updateConfigs();
-        this.updateStyles();
-    },
-
-    updateStyles() {
-        // Update button in nav
-        document.getElementById('darkMode').innerHTML = displayConfigs.config.navText;
-
-        let backgroundColor = displayConfigs.config.backgroundColor;
-        let textColor = displayConfigs.config.textColor;
-        let primaryColor = displayConfigs.primaryColor;
-
-        // Update background and text color of page items
-        $('nav').css({'background-color': backgroundColor});
-        $('.nav-logo').css({'color': textColor});
-        $('.nav-item').css({'color': textColor});
-        $('.nav-item-arrow').css({'color': primaryColor});
-        $('body').css({
-            'background-color': backgroundColor,
-            'color': textColor
-        });
-    },
-}
+sessionManager.newSession();
 
 requestHeaderManager.setRequestHeader();
-
-sessionManager.newSession();
