@@ -20,9 +20,9 @@ $(document).ready(function () {
             $(this).css('color', 'black');
         });
     
-        var loaderElements = document.getElementsByClassName('lds-ellipsis');
-        for (var i = 0; i < loaderElements.length; i++) {
-            for (var j = 0; j < loaderElements[i].childNodes.length; j++) {
+        const loaderElements = document.getElementsByClassName('lds-ellipsis');
+        for (let i = 0; i < loaderElements.length; i++) {
+            for (let j = 0; j < loaderElements[i].childNodes.length; j++) {
                 loaderElements[i].childNodes[j].style.background = backgroundColorAlt;
             }
         }

@@ -1,7 +1,7 @@
 $(document).ready(function () {
     $('#darkMode').click(function () {
-        let textColor = displayConfigs.config.textColor;
-        let backgroundColor = displayConfigs.config.backgroundColor;
+        const textColor = displayConfigs.config.textColor;
+        const backgroundColor = displayConfigs.config.backgroundColor;
     
         $('.option-container').css({
             'color': textColor,
@@ -9,36 +9,25 @@ $(document).ready(function () {
         });
     });
 
-
     $('#add-entity').click(function () {
-        /*
-        Enable input and adding of entity
-        which is displayed in output list
-        */
+        const entity = $('#entity-name').val().trim();
 
-        // Get input entity value
-        var entity = document.getElementById('entity-name').value.trim();
-
-        if (entity != '' && !entityList.includes(entity + '\n')) {
-            // Hide empty message and display output lists
+        if (inputValidator.isValidEntity(entity)) {
+            // Hide empty message and display output list
             $('#empty-container-message').hide();
             $('#output-list-container').show();
 
             // Add entity to output list
             entityList.push(entity + '\n');
 
-            // Get color for entity and related attributes
-            var backgroundColor = colors.pop();
-
             // Add entity to display list
-            document.getElementById('entity-list').innerHTML += '<span class="added-element" name="entity" style="background-color: ' + backgroundColor + ';">' + entity + '</span>';
+            $('#entity-list').append('<span class="added-element" name="entity" style="background-color: ' + colors.pop() + ';">' + entity + '</span>');
             
-            updateConfigurationFileURL();
+            updateBlobUrl();
             bindEvents();
         }
-        
         // Reset input form
-        document.getElementById('entity-name').value = '';
+        $('#entity-name').val('');
     });
 
 
@@ -47,40 +36,26 @@ $(document).ready(function () {
         Enable input and adding of attribute
         which is displayed in output list
         */
+        const name = $('#attribute-name').val().trim();
+        const relation = $('#attribute-relation').val().trim();
+        const dropdown = $('#attribute-dropdown').val().split(',');
 
-        // Get input attribute values
-        var attributeName = document.getElementById('attribute-name').value.trim();
-        var attributeRelation = document.getElementById('attribute-relation').value.trim();
-        var attributeDropdown = document.getElementById('attribute-dropdown').value.split(',');
-
-        // Format attribute dropdown values
-        var attributeDropdownValues = '';
-        for (var i = 0; i < attributeDropdown.length; i++) {
-            if (i != attributeDropdown.length-1) {
-                attributeDropdownValues += attributeDropdown[i].trim() + "|";
+        // Construct formatted attribute string
+        let attribute = name + ' ' + 'Arg:' + relation + ', Value:';
+        for (let i = 0; i < dropdown.length; i++) {
+            if (i != dropdown.length - 1) {
+                attribute += dropdown[i].trim() + "|";
             } else {
-                attributeDropdownValues += attributeDropdown[i].trim();
+                attribute += dropdown[i].trim();
             }
         }
 
-        // Construct correctly formatted attribute string
-        var attribute = attributeName + ' ' + 'Arg:' + attributeRelation + ', Value:' + attributeDropdownValues;
-        attribute = attribute.trim();
-
-        if (attribute != '') {
-            // Ensure the related entity is valid
-            if (entityList.indexOf(attributeRelation + '\n') == -1) {
-                alert('You need to add the related entity as an entity before using it in an attribute.');
+        if (attribute) {
+            // Validate related entities
+            if (entityList.indexOf(relation + '\n') == -1) {
+                alert('You need to add the related entity before using it in an attribute.');
                 return;
             }
-
-            // Get colour of related entity
-            var backgroundColor = '';
-            $('span[name="entity"]').each(function () {
-                if ($(this).text() == attributeRelation) {
-                    backgroundColor = $(this).css('background-color');
-                }
-            });
 
             // Hide empty message and display output lists
             $('#empty-container-message').hide();
@@ -90,28 +65,29 @@ $(document).ready(function () {
             attributeList.push(attribute + '\n');
 
             // Add attribute to display list
-            document.getElementById('attribute-list').innerHTML += '<span class="added-element" attribute-for="' + attributeRelation + '" style="background-color: ' + backgroundColor + ';">' + attribute + '</span>';
+            let entityColor = getEntityColor($(this).text());
+            $('#attribute-list').html(
+                '<span class="added-element" attribute-for="' + relation + '" style="background-color: ' + entityColor + ';">' +
+                    attribute +
+                '</span>'
+            );
         
-            updateConfigurationFileURL();
+            updateBlobUrl();
             bindEvents();
         }
-
         // Reset input forms
-        document.getElementById('attribute-name').value = '';
-        document.getElementById('attribute-relation').value = '';
-        document.getElementById('attribute-dropdown').value = '';
+        $('#attribute-name').val('');
+        $('#attribute-relation').val('');
+        $('#attribute-dropdown').val('');
     });
 
 
-    function updateConfigurationFileURL() {
-        var saveButton = document.getElementById('save-configuration-file');
-        var fileName = 'annotation.conf';
-        var contentType = 'text/plain';
-        var blob = new Blob(entityList.concat(attributeList), {type: contentType});
-
+    function updateBlobUrl() {
+        let saveButton = document.getElementById('save-configuration-file');
+        let blob = new Blob(entityList.concat(attributeList), {type: 'text/plain'});
         window.URL.revokeObjectURL(saveButton.href);
         saveButton.href = URL.createObjectURL(blob);
-        saveButton.download = fileName;
+        saveButton.download = 'annotation.conf';
     }
 
 
@@ -120,52 +96,50 @@ $(document).ready(function () {
         Enable added elements to
         be deleted upon selection
         */
-
         $('.added-element').click(function () {
-            // Get element text
-            var elementText = $(this).text() + '\n';
+            const text = $(this).text() + '\n';
 
             // Remove element from output list
-            var listId = $(this).parent().attr('id');
-            if (listId == 'entity-list') {
+            const listType = $(this).parent().attr('id');
+            if (listType == 'entity-list') {
                 // Make entity color available again
                 colors.push($(this).css('background-color'));
 
                 // Remove from entity list
-                for (var i = 0; i < entityList.length; i++) {
-                    if (entityList[i] == elementText) {
+                for (let i = 0; i < entityList.length; i++) {
+                    if (entityList[i] == text) {
                         entityList.splice(i, 1);
                         break;
                     }
                 }
 
                 // Remove all attributes that relate to selected entity
-                var i = attributeList.length - 1;
+                let i = attributeList.length - 1;
                 while (i > 0) {
                     if (attributeList[i] != '[attributes]\n') {
-                        var attributeComponent = attributeList[i].split('Arg:')[1];
-                        var relatedEntity = attributeComponent.split(', Value:')[0] + '\n';
-                        if (relatedEntity == elementText) {
+                        const attributeComponent = attributeList[i].split('Arg:')[1];
+                        const relatedEntity = attributeComponent.split(', Value:')[0] + '\n';
+                        if (relatedEntity == text) {
                             attributeList.splice(i, 1);
                         }
                     }
                     i--;
                 }
 
-                $('span[attribute-for=' + elementText + ']').each(function () {
+                // Remove related attributes from display
+                $('span[attribute-for=' + text + ']').each(function () {
                     $(this).remove();
                 });
-            } else if (listId == 'attribute-list') {
+            } else if (listType == 'attribute-list') {
                 // Remove from attribute list
-                for (var i = 0; i < attributeList.length; i++) {
-                    if (attributeList[i] == elementText) {
+                for (let i = 0; i < attributeList.length; i++) {
+                    if (attributeList[i] == text) {
                         attributeList.splice(i, 1);
                         break;
                     }
                 }
             }
-
-            // Delete element from display list
+            // Remove from display list
             $(this).remove();
 
             // Show empty container list is valid
@@ -173,8 +147,7 @@ $(document).ready(function () {
                 $('#empty-container-message').show();
                 $('#output-list-container').hide();
             }
-
-            updateConfigurationFileURL();
+            updateBlobUrl();
         });
     }
 
@@ -186,15 +159,31 @@ $(document).ready(function () {
         background_color: 'white',
         border_width: 4
     });
-
-    // Initalize entity and attribute lists with default headers
-    var entityList = ['[entities]\n'];
-    var attributeList = ['[attributes]\n'];
-
-    // Colors to be used for entities and attributes in output list
-    var colors = [
-        '#C0C0C0', '#4169E1', '#FFF0F5', '#FFFACD', '#E6E6FA', '#B22222', '#C71585',
-        '#32CD32', '#48D1CC', '#FF6347', '#FFA500', '#FF69B4', '#008B8B', '#00BFFF',
-        '#E0CCA4', '#ADD8D1', '#8FE3B4', '#FFC0CB', '#FFA07A', '#7B68EE', '#FFD700'
-    ];
 });
+
+const inputValidator = {
+    isValidEntity(entity) {
+        return entity != '' && !entityList.includes(entity + '\n')
+    }
+}
+
+
+function getEntityColor(name) {
+    $('span[name="entity"]').each(function () {
+        if ($(this).text() == relation) {
+            return $(this).css('background-color');
+        }
+    });
+}
+
+
+// Initalize entity and attribute lists with default headers
+let entityList = ['[entities]\n'];
+let attributeList = ['[attributes]\n'];
+
+// Colors to be used for entities and attributes in output list
+let colors = [
+    '#C0C0C0', '#4169E1', '#FFF0F5', '#FFFACD', '#E6E6FA', '#B22222', '#C71585',
+    '#32CD32', '#48D1CC', '#FF6347', '#FFA500', '#FF69B4', '#008B8B', '#00BFFF',
+    '#E0CCA4', '#ADD8D1', '#8FE3B4', '#FFC0CB', '#FFA07A', '#7B68EE', '#FFD700'
+];

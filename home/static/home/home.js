@@ -22,12 +22,11 @@ function setupDemo() {
             const data = JSON.parse(response);
             const config = data['config'];
             const docs = data['documents'];
-            const docsCount = docs.length;
-            const openType = docsCount <= 1 ? 'single' : 'multiple'
+            const openType = docs.length <= 1 ? 'single' : 'multiple'
 
             // Store configurations
             localStorage.setItem('configText', config);
-            localStorage.setItem('documentCount', docsCount);
+            localStorage.setItem('documentCount', docs.length);
             localStorage.setItem('documentOpenType', openType);
 
             // Store doc texts and file types
